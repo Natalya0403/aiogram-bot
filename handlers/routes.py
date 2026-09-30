@@ -19,7 +19,7 @@ from cloudipsp import Api, Checkout
 from dotenv import load_dotenv
 
 # Импорты клиента и форм
-from project.client import (
+from client import (
     create_order,
     create_product,
     get_all_orders,
@@ -28,7 +28,7 @@ from project.client import (
     get_product_by_title,
     get_order_by_id
 )
-from project.forms import AdminAddProduct, ProductSearch
+from forms import AdminAddProduct, ProductSearch
 
 # -------------------------------------------
 load_dotenv()
