@@ -7,12 +7,12 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramAPIError
-from project.middleware.admin_only import AdminOnlyMiddleware
-from project.middleware.rate_limit import RateLimitMiddleware
+from middleware.admin_only import AdminOnlyMiddleware
+from middleware.rate_limit import RateLimitMiddleware
 from dotenv import load_dotenv
 import os
 
-from project.handlers import routes
+from handlers import routes
 
 load_dotenv()
 
