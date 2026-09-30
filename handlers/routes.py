@@ -40,7 +40,7 @@ ADMIN_IDS = [
     for admin_id in raw_admin_ids.split(",")
     if admin_id.strip().isdigit()
 ]
-
+API_URL = os.getenv("API_URL")
 router = Router()
 
 
@@ -414,34 +414,34 @@ async def remove_item(callback: CallbackQuery, state: FSMContext):
 
 # Флаг локальной разработки.
 # Поставьте True, если api.fondy.eu заблокирован сетевым провайдером.
-USE_MOCK_FONDY = True
+
+USE_MOCK_FONDY = os.getenv("USE_MOCK_FONDY", "False").lower() in ("true", "1", "yes")
+
+router = Router()
 
 
 def generate_fondy_url(total_cents: int, order_id: str) -> str:
-  """Синхронная функция генерации ссылки Fondy."""
-  if USE_MOCK_FONDY:
-    # Возвращаем рабочую ссылку на тестовый мерчант Fondy или любой внешнюю страницу
-    # (чтобы браузер не открывал ошибку Amazon S3 AccessDenied)
-    return "https://pay.fondy.eu/merchants/test/index.html"
+    """Синхронная функция генерации ссылки Fondy."""
+    if USE_MOCK_FONDY:
+        # Возвращаем рабочую ссылку на тестовый мерчант Fondy или любую внешнюю страницу
+        return "https://pay.fondy.eu/merchants/test/index.html"
 
-  # Реальный вызов
-  api = Api(merchant_id=1396424, secret_key="test")
-  checkout = Checkout(api=api)
-  payment_data = {
-      "currency": "USD",
-      "amount": total_cents,
-      "order_id": order_id,
-      "order_desc": "Оплата заказа в Telegram",
-      "server_callback_url": (
-          "https://landmass-unclaimed-gathering.ngrok-free.dev/webhook/fondy"
-      ),
-  }
-  return checkout.url(payment_data).get("checkout_url")
+    # Реальный вызов
+    api = Api(merchant_id=1396424, secret_key="test")
+    checkout = Checkout(api=api)
+    payment_data = {
+        "currency": "USD",
+        "amount": int(total_cents),
+        "order_id": str(order_id),
+        "order_desc": f"Оплата заказа #{order_id} в Telegram",
+        "server_callback_url": f"{API_URL}/webhook/fondy",
+    }
+    return checkout.url(payment_data).get("checkout_url")
 
 
 @router.callback_query(F.data == "confirm_order")
 async def confirm_order(callback: CallbackQuery, state: FSMContext):
-    # 1. Отвечаем мгновенно
+    # 1. Отвечаем мгновенно, чтобы Telegram не выдал таймаут на кнопку
     await callback.answer()
 
     data = await state.get_data()
@@ -483,7 +483,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         if total_cents == 0:
             total_cents = 100
 
-        # 3. Безопасное получение URL
+        # 3. Безопасное получение URL через поток
         try:
             url = await asyncio.wait_for(
                 asyncio.to_thread(generate_fondy_url, total_cents, order_id),
