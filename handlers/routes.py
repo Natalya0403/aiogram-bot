@@ -402,12 +402,22 @@ async def remove_item(callback: CallbackQuery, state: FSMContext):
 # Оплата и генерация ссылки Fondy
 
 
+import urllib3
+
+# Отключаем предупреждения об отключенной проверке SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
 def generate_fondy_url(total_cents: int, order_id: str) -> str:
     """Синхронная функция генерации ссылки Fondy."""
     if USE_MOCK_FONDY:
         return "https://pay.fondy.eu/merchants/test/index.html"
 
     api = Api(merchant_id=1396424, secret_key="test")
+
+    # Отключаем проверку SSL-сертификата для сессии requests
+    api.session.session.verify = False
+
     checkout = Checkout(api=api)
     payment_data = {
         "currency": "USD",
@@ -417,7 +427,6 @@ def generate_fondy_url(total_cents: int, order_id: str) -> str:
         "server_callback_url": f"{API_URL}/webhook/fondy",
     }
     return checkout.url(payment_data).get("checkout_url")
-
 
 @router.callback_query(F.data == "confirm_order")
 async def confirm_order(callback: CallbackQuery, state: FSMContext):
