@@ -98,23 +98,17 @@ async def get_order_by_id(order_id: int):
       except Exception as e:
         print('Ошибка при получении товара', e)
       return None
-#================================================================================
-
-# async def update_user_by_id(user_id: int, name: str, email: str):
-#     async with httpx.AsyncClient() as client:
-#         try:
-#             response = await client.put(f"{API_URL}/users/{user_id}", json={"name": name, "email": email})
-#             return response.status_code == 200
-#         except Exception as e:
-#             print("Ошибка при получении пользователей:", e)
-#             return None
-        
-
-# async def delete_user_by_id(user_id: int):
-#     async with httpx.AsyncClient() as client:
-#         try:
-#             response = await client.delete(f"{API_URL}/users/{user_id}")
-#             return response.status_code == 200
-#         except Exception as e:
-#             print("Ошибка при получении пользователей:", e)
-#             return None
+#==============================Домашка==================================================
+async def toggle_favorite_api(user_id: int, product_id: int) -> dict:
+  async with httpx.AsyncClient() as client:
+    try:
+      response = await client.post(
+        f"{API_URL}/favorite/add",
+        json={"user_id": user_id, "product_id": product_id},
+        timeout=5.0
+      )
+      if response.status_code == 200:
+        return response.json()
+      return {"status": "error", "message": "Ошибка сервера"}
+    except Exception:
+      return {"status": "error", "message": "Не удалось связаться с сервером"}

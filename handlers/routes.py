@@ -5,6 +5,7 @@ import uuid
 
 from aiogram import F, Router
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -16,6 +17,7 @@ from aiogram.types import (
 )
 from cloudipsp import Api, Checkout
 from dotenv import load_dotenv
+import urllib3
 
 # Импорты клиента и форм
 from client import (
@@ -26,20 +28,24 @@ from client import (
     get_order_by_id,
     get_product_by_id,
     get_product_by_title,
+    toggle_favorite_api,
 )
 from forms import AdminAddProduct, ProductSearch
 
 # -------------------------------------------
 load_dotenv()
 
-# Безопасное считывание ADMIN_IDS из .env (поддерживает один или несколько ID через запятую)
+# Отключаем предупреждения об отключенной проверке SSL для urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Безопасное считывание ADMIN_IDS из .env
 raw_admin_ids = os.getenv("ADMIN_IDS", "0")
 ADMIN_IDS = [
     int(admin_id.strip())
     for admin_id in raw_admin_ids.split(",")
     if admin_id.strip().isdigit()
 ]
-API_URL = os.getenv("API_URL")
+API_URL = os.getenv("API_URL", "http://localhost")
 USE_MOCK_FONDY = os.getenv("USE_MOCK_FONDY", "False").lower() in ("true", "1", "yes")
 
 # ЕДИНСТВЕННОЕ объявление роутера на весь файл
@@ -51,7 +57,27 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-# 1. СТАРТ: Реакция на команду /admin_add
+# Вспомогательная функция сборки клавиатуры товара
+def get_product_keyboard(product_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Купить", callback_data=f"buy:{product_id}"
+                ),
+                InlineKeyboardButton(
+                    text="⭐ Избранное", callback_data=f"fav:{product_id}"
+                ),
+            ]
+        ]
+    )
+
+
+# =====================================================================
+# 1. АДМИН-ПАНЕЛЬ
+# =====================================================================
+
+
 @router.message(Command("admin_add"))
 async def admin_add_start(msg: Message, state: FSMContext):
     if not is_admin(msg.from_user.id):
@@ -62,7 +88,6 @@ async def admin_add_start(msg: Message, state: FSMContext):
     await msg.answer("Введите название товара")
 
 
-# 2. Обработка НАЗВАНИЯ товара
 @router.message(AdminAddProduct.title)
 async def admin_add_title(msg: Message, state: FSMContext):
     await state.update_data(title=msg.text)
@@ -70,7 +95,6 @@ async def admin_add_title(msg: Message, state: FSMContext):
     await msg.answer("Введите описание товара")
 
 
-# 3. Обработка ОПИСАНИЯ товара
 @router.message(AdminAddProduct.decsr)
 async def admin_add_desc(msg: Message, state: FSMContext):
     await state.update_data(descr=msg.text)
@@ -78,7 +102,6 @@ async def admin_add_desc(msg: Message, state: FSMContext):
     await msg.answer("Введите стоимость товара (число)")
 
 
-# 4. Обработка ЦЕНЫ товара
 @router.message(AdminAddProduct.price)
 async def admin_add_price(msg: Message, state: FSMContext):
     try:
@@ -92,7 +115,6 @@ async def admin_add_price(msg: Message, state: FSMContext):
     await msg.answer("Укажите ссылку на изображение товара")
 
 
-# 5. Обработка КАРТИНКИ и ЗАВЕРШЕНИЕ
 @router.message(AdminAddProduct.image_url)
 async def admin_add_finish(msg: Message, state: FSMContext):
     await state.update_data(image_url=msg.text)
@@ -113,7 +135,6 @@ async def admin_add_finish(msg: Message, state: FSMContext):
     await state.clear()
 
 
-# /admin_orders - просмотр всех заказов
 @router.message(Command("admin_orders"))
 async def list_all_orders(msg: Message):
     if not is_admin(msg.from_user.id):
@@ -134,7 +155,7 @@ async def list_all_orders(msg: Message):
         text += (
             f"<b>Заказ №{order['id']}</b>\n"
             f"Пользователь: <code>{order['user_id']}</code>\n"
-            f"Статус: {order['status']}\n"
+            f"Статус: {escape(str(order['status']))}\n"
             f"Позиций: {len(items)} (всего {total_quantity} шт.)\n"
             f"---------------------\n"
         )
@@ -142,7 +163,6 @@ async def list_all_orders(msg: Message):
     await msg.answer(text, parse_mode=ParseMode.HTML)
 
 
-# /admin_order <id> - просмотр конкретного заказа
 @router.message(Command("admin_order"))
 async def order_details(msg: Message, command: CommandObject):
     if not is_admin(msg.from_user.id):
@@ -162,7 +182,7 @@ async def order_details(msg: Message, command: CommandObject):
 
     text = f"<b>Заказ #{order['id']}</b>\n"
     text += f"👤 Пользователь: <a href='tg://user?id={order['user_id']}'>Написать</a> (ID: <code>{order['user_id']}</code>)\n"
-    text += f"📦 Статус: {order['status']}\n\n"
+    text += f"📦 Статус: {escape(str(order['status']))}\n\n"
     text += "<b>Состав заказа:</b>\n"
 
     for item in order.get("items", []):
@@ -172,7 +192,11 @@ async def order_details(msg: Message, command: CommandObject):
     await msg.answer(text, parse_mode=ParseMode.HTML)
 
 
-# 1. СТАРТ И МЕНЮ
+# =====================================================================
+# 2. ПОЛЬЗОВАТЕЛЬСКИЙ ФУНКЦИОНАЛ И КАТАЛОГ
+# =====================================================================
+
+
 @router.message(Command("start"))
 @router.message(F.text.lower() == "меню")
 async def welcome_message(msg: Message):
@@ -198,7 +222,6 @@ async def welcome_message(msg: Message):
     )
 
 
-# 2. ПОИСК ПО НАЗВАНИЮ (ЗАПРОС ВВОДА)
 @router.callback_query(F.data == "search_by_title")
 async def ask_for_title(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProductSearch.title)
@@ -206,7 +229,6 @@ async def ask_for_title(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# 3. ОБРАБОТКА ВВОДА НАЗВАНИЯ
 @router.message(ProductSearch.title)
 async def process_title_search(msg: Message, state: FSMContext):
     title = msg.text.strip()
@@ -216,20 +238,16 @@ async def process_title_search(msg: Message, state: FSMContext):
         await msg.answer("❌ Товар не найден")
     else:
         for product in products:
+            safe_title = escape(product.get("title", ""))
+            safe_descr = escape(product.get("descr", ""))
+
             text = (
-                f"<b>{product['title']}</b>\n\n"
-                f"{product['descr']}\n\n"
+                f"<b>{safe_title}</b>\n\n"
+                f"{safe_descr}\n\n"
                 f"<b>Цена:</b> {product['price']} $"
             )
-            btns = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🧺 Купить", callback_data=f"buy:{product['id']}"
-                        )
-                    ]
-                ]
-            )
+            btns = get_product_keyboard(product['id'])
+
             await msg.answer_photo(
                 photo=product['image_url'],
                 caption=text,
@@ -240,7 +258,6 @@ async def process_title_search(msg: Message, state: FSMContext):
     await state.clear()
 
 
-# 4. ПРОСМОТР КАТАЛОГА (ПАГИНАЦИЯ)
 @router.callback_query(F.data.startswith("show_catalog"))
 async def show_catalog(callback: CallbackQuery):
     products = await get_all_products()
@@ -255,21 +272,24 @@ async def show_catalog(callback: CallbackQuery):
 
     product = products[index]
 
+    safe_title = escape(product.get("title", ""))
+    safe_descr = escape(product.get("descr", ""))
+
     text = (
-        f"<b>{product['title']}</b>\n\n"
-        f"{product['descr']}\n\n"
+        f"<b>{safe_title}</b>\n\n"
+        f"{safe_descr}\n\n"
         f"<b>Цена:</b> {product['price']} $"
     )
 
-    buttons = []
+    nav_buttons = []
     if index > 0:
-        buttons.append(
+        nav_buttons.append(
             InlineKeyboardButton(
                 text="◀️ Назад", callback_data=f"show_catalog:{index - 1}"
             )
         )
     if index < len(products) - 1:
-        buttons.append(
+        nav_buttons.append(
             InlineKeyboardButton(
                 text="Вперед ▶️", callback_data=f"show_catalog:{index + 1}"
             )
@@ -277,11 +297,14 @@ async def show_catalog(callback: CallbackQuery):
 
     pagination = InlineKeyboardMarkup(
         inline_keyboard=[
-            buttons,
+            nav_buttons,
             [
                 InlineKeyboardButton(
-                    text="🧺 Купить", callback_data=f"buy:{product['id']}"
-                )
+                    text="💳 Купить", callback_data=f"buy:{product['id']}"
+                ),
+                InlineKeyboardButton(
+                    text="⭐ Избранное", callback_data=f"fav:{product['id']}"
+                ),
             ],
         ]
     )
@@ -290,21 +313,29 @@ async def show_catalog(callback: CallbackQuery):
         media=product['image_url'], caption=text, parse_mode=ParseMode.HTML
     )
 
-    if callback.message.photo:
-        await callback.message.edit_media(media=media, reply_markup=pagination)
-    else:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=product['image_url'],
-            caption=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=pagination,
-        )
+    try:
+        if callback.message.photo:
+            await callback.message.edit_media(media=media, reply_markup=pagination)
+        else:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=product['image_url'],
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=pagination,
+            )
+    except TelegramBadRequest as e:
+        if "message to edit has no photo" in str(e) or "message is not modified" in str(e):
+            await callback.message.answer_photo(
+                photo=product['image_url'],
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=pagination,
+            )
 
     await callback.answer()
 
 
-# 5. ОБРАБОТЧИК КНОПКИ "КУПИТЬ" (ДОБАВЛЕНИЕ В КОРЗИНУ)
 @router.callback_query(F.data.startswith("buy:"))
 async def buy_handler(callback: CallbackQuery, state: FSMContext):
     product_id = int(callback.data.split(":")[1])
@@ -326,14 +357,22 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer("✅ Товар добавлен в корзину!")
 
 
-# ----------Корзина--------------------------------------------------
-@router.message(Command("cart"))
-async def view_cart(message: Message, state: FSMContext):
+# =====================================================================
+# 3. КОРЗИНА
+# =====================================================================
+
+
+async def render_cart(message: Message, state: FSMContext, is_callback: bool = False):
+    """Вспомогательная функция отрисовки корзины."""
     data = await state.get_data()
     cart = data.get("cart", [])
 
     if not cart:
-        await message.answer("❌ Ваша корзина пуста")
+        text = "❌ Ваша корзина пуста"
+        if is_callback:
+            await message.edit_text(text)
+        else:
+            await message.answer(text)
         return
 
     text = "<b>🧺 Ваша корзина:</b>\n\n"
@@ -344,12 +383,12 @@ async def view_cart(message: Message, state: FSMContext):
         quantity = item["quantity"]
         product = await get_product_by_id(product_id)
 
-        if product and 'title' in product:
-            product_title = product['title']
+        if product and "title" in product:
+            product_title = escape(product["title"])
         else:
             product_title = f"Товар №{product_id}"
 
-        text += f'{idx}. Товар: {product_title} — Кол-во: {quantity} шт.\n'
+        text += f"{idx}. {product_title} — {quantity} шт.\n"
 
         remove_buttons.append([
             InlineKeyboardButton(
@@ -374,19 +413,25 @@ async def view_cart(message: Message, state: FSMContext):
         + remove_buttons
     )
 
-    await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    if is_callback:
+        await message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
-# Очистка корзины
+@router.message(Command("cart"))
+async def view_cart(message: Message, state: FSMContext):
+    await render_cart(message, state, is_callback=False)
+
+
 @router.callback_query(F.data == "clear_cart")
 async def clear_cart(callback: CallbackQuery, state: FSMContext):
     await state.update_data(cart=[])
-    await callback.message.edit_text('🧹 Корзина очищена')
+    await callback.message.edit_text("🧹 Корзина очищена")
     await callback.answer()
 
 
-# Удаление одного товара из корзины
-@router.callback_query(F.data.startswith('remove_item:'))
+@router.callback_query(F.data.startswith("remove_item:"))
 async def remove_item(callback: CallbackQuery, state: FSMContext):
     product_id = int(callback.data.split(":")[1])
     data = await state.get_data()
@@ -394,18 +439,13 @@ async def remove_item(callback: CallbackQuery, state: FSMContext):
     cart = [item for item in cart if item["product_id"] != product_id]
 
     await state.update_data(cart=cart)
-    await callback.message.edit_text('❌ Товар удален из корзины')
-    await callback.answer()
+    await render_cart(callback.message, state, is_callback=True)
+    await callback.answer("Товар удален из корзины")
 
 
 # =====================================================================
-# Оплата и генерация ссылки Fondy
-
-
-import urllib3
-
-# Отключаем предупреждения об отключенной проверке SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# 4. ОПЛАТА И ИЗБРАННОЕ
+# =====================================================================
 
 
 def generate_fondy_url(total_cents: int, order_id: str) -> str:
@@ -414,8 +454,6 @@ def generate_fondy_url(total_cents: int, order_id: str) -> str:
         return "https://pay.fondy.eu/merchants/test/index.html"
 
     api = Api(merchant_id=1396424, secret_key="test")
-
-    # Отключаем проверку SSL-сертификата для сессии requests
     api.session.session.verify = False
 
     checkout = Checkout(api=api)
@@ -427,6 +465,7 @@ def generate_fondy_url(total_cents: int, order_id: str) -> str:
         "server_callback_url": f"{API_URL}/webhook/fondy",
     }
     return checkout.url(payment_data).get("checkout_url")
+
 
 @router.callback_query(F.data == "confirm_order")
 async def confirm_order(callback: CallbackQuery, state: FSMContext):
@@ -470,7 +509,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         try:
             url = await asyncio.wait_for(
                 asyncio.to_thread(generate_fondy_url, total_cents, order_id),
-                timeout=15.0
+                timeout=15.0,
             )
 
             markup = InlineKeyboardMarkup(
@@ -481,7 +520,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
 
             await callback.message.answer(
                 "✅ Ваш заказ оформлен!\nПерейдите по кнопке для оплаты:",
-                reply_markup=markup
+                reply_markup=markup,
             )
 
             await state.update_data(cart=[])
@@ -504,3 +543,22 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             "❌ Ошибка при оформлении заказа на сервере. Попробуйте позже."
         )
+
+
+@router.callback_query(F.data.startswith("fav:"))
+async def process_favorite_button(callback: CallbackQuery):
+    try:
+        product_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка в данных товара", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    res = await toggle_favorite_api(user_id, product_id)
+
+    if res and isinstance(res, dict):
+        msg = res.get("message", "Готово")
+    else:
+        msg = "Ошибка сервера при добавлении в избранное"
+
+    await callback.answer(text=msg, show_alert=False)

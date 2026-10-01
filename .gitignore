@@ -1,7 +1,6 @@
 .DS_Store
 .idea/
-*.db
+
 __pycache__/
 .env
 venv/
-nataiv.db
