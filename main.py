@@ -35,7 +35,10 @@ async def main() -> None:
 
     dp.include_router(routes.router)
 
-    await bot.set_my_commands([])
+    await bot.set_my_commands([BotCommand(command="start", description="Перезапустить бота"),
+                               BotCommand(command="cart", description="Корзина"),
+                               BotCommand(command="admin_add", description="Админ-панель")])
+
 
     try:
         await dp.start_polling(bot)
